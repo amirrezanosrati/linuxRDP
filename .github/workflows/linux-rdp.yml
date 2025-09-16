@@ -1,32 +1,39 @@
-name: Linux RDP Server
+name: SSH Shell Server
 on:
   workflow_dispatch:
 
 jobs:
-  linux-rdp:
+  ssh-server:
     runs-on: ubuntu-latest
     steps:
-    - name: Install Ubuntu Desktop and RDP
+    - name: Install and Setup SSH Server
       run: |
         sudo apt-get update
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ubuntu-desktop xrdp
+        sudo apt-get install -y openssh-server
         
-        # تنظیم رمز عبور برای کاربر ubuntu
-        echo "ubuntu:UbuntuPass123!" | sudo chpasswd
+        # تنظیم SSH برای دسترسی با پسورد
+        sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+        sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
         
-        # تنظیمات XRDP
-        sudo sed -i 's/port=3389/port=3390/g' /etc/xrdp/xrdp.ini
-        echo "xfce4-session" > ~/.xsession
-        sudo systemctl enable xrdp
-        sudo systemctl restart xrdp
+        # ایجاد کاربر جدید (اگر وجود ندارد)
+        if ! id "shelluser" &>/dev/null; then
+            sudo useradd -m -s /bin/bash shelluser
+            echo "shelluser:ShellPass123!" | sudo chpasswd
+            sudo usermod -aG sudo shelluser
+            echo "✅ User shelluser created"
+        else
+            echo "⚠️ User shelluser already exists, updating password"
+            echo "shelluser:ShellPass123!" | sudo chpasswd
+        fi
+        
+        # همچنین دسترسی root را فعال می‌کنیم
+        echo "root:RootPass123!" | sudo chpasswd
+        
+        # ریستارت سرویس SSH
+        sudo service ssh restart
+        sleep 3
 
-    - name: Install additional tools
-      run: |
-        # نصب ابزارهای مفید
-        sudo apt-get install -y firefox qterminal gnome-terminal
-        sudo apt-get install -y git curl wget
-
-    - name: Setup Ngrok for RDP
+    - name: Setup Ngrok for SSH
       run: |
         # دانلود ngrok
         wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
@@ -35,47 +42,80 @@ jobs:
         
         ./ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
         
-        # ایجاد تونل برای RDP
-        ./ngrok tcp 3390 --log=stdout > ngrok.log 2>&1 &
+        # ایجاد تونل برای SSH
+        ./ngrok tcp 22 --log=stdout > ngrok.log 2>&1 &
         sleep 20
 
-    - name: Get RDP Connection Info
+    - name: Get SSH Connection Info
       run: |
         # دریافت اطلاعات تونل
-        RDP_TUNNEL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' | head -1)
+        SSH_TUNNEL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' | head -1)
         
-        if [ -n "$RDP_TUNNEL" ]; then
-            RDP_IP=$(echo "$RDP_TUNNEL" | cut -d':' -f2 | sed 's#//##')
-            RDP_PORT=$(echo "$RDP_TUNNEL" | cut -d':' -f3)
+        if [ -n "$SSH_TUNNEL" ]; then
+            SSH_IP=$(echo "$SSH_TUNNEL" | cut -d':' -f2 | sed 's#//##')
+            SSH_PORT=$(echo "$SSH_TUNNEL" | cut -d':' -f3)
         else
-            RDP_IP="0.tcp.ngrok.io"
-            RDP_PORT="3390"
+            SSH_IP="0.tcp.ngrok.io"
+            SSH_PORT="22"
         fi
         
-        echo "RDP_IP=$RDP_IP" >> $GITHUB_ENV
-        echo "RDP_PORT=$RDP_PORT" >> $GITHUB_ENV
+        echo "SSH_IP=$SSH_IP" >> $GITHUB_ENV
+        echo "SSH_PORT=$SSH_PORT" >> $GITHUB_ENV
 
-    - name: Display RDP Connection Details
+    - name: Display SSH Connection Details
       run: |
         echo "=========================================="
-        echo "🎯 LINUX RDP SERVER READY!"
+        echo "🎯 SSH SHELL SERVER READY!"
         echo "=========================================="
-        echo "🌐 RDP Address: ${{ env.RDP_IP }}"
-        echo "🔌 RDP Port: ${{ env.RDP_PORT }}"
-        echo "👤 Username: ubuntu"
-        echo "🔑 Password: UbuntuPass123!"
+        echo "🌐 SSH Host: ${{ env.SSH_IP }}"
+        echo "🔌 SSH Port: ${{ env.SSH_PORT }}"
         echo ""
-        echo "💻 How to connect:"
-        echo "1. Open Remote Desktop Connection"
-        echo "2. Enter: ${{ env.RDP_IP }}:${{ env.RDP_PORT }}"
-        echo "3. Username: ubuntu"
-        echo "4. Password: UbuntuPass123!"
+        echo "👤 User 1: shelluser"
+        echo "🔑 Password: ShellPass123!"
+        echo ""
+        echo "👤 User 2: root"
+        echo "🔑 Password: RootPass123!"
+        echo ""
+        echo "💻 Connect with Putty:"
+        echo "Host: ${{ env.SSH_IP }}"
+        echo "Port: ${{ env.SSH_PORT }}"
         echo "=========================================="
 
-    - name: Keep RDP alive
+    - name: Install useful tools
       run: |
-        echo "🟢 Linux RDP Server is running..."
+        # نصب ابزارهای مفید برای shell
+        sudo apt-get install -y \
+          nano \
+          vim \
+          git \
+          curl \
+          wget \
+          htop \
+          tree \
+          unzip \
+          net-tools
+
+    - name: Show system info
+      run: |
+        echo "🐧 System Information:"
+        echo "OS: $(lsb_release -d | cut -f2)"
+        echo "Kernel: $(uname -r)"
+        echo "CPU: $(nproc) cores"
+        echo "Memory:"
+        free -h
+        echo "Disk:"
+        df -h
+
+    - name: Keep SSH alive
+      run: |
+        echo "🟢 SSH Server is running..."
+        echo "💻 Available tools: nano, vim, git, curl, wget, htop, net-tools"
+        echo ""
+        echo "🔧 You can connect with:"
+        echo "ssh shelluser@${{ env.SSH_IP }} -p ${{ env.SSH_PORT }}"
+        echo "ssh root@${{ env.SSH_IP }} -p ${{ env.SSH_PORT }}"
+        echo ""
         while true; do
-            echo "✅ RDP Active - $(date +'%H:%M:%S')"
+            echo "✅ SSH Active - $(date +'%H:%M:%S')"
             sleep 60
         done
